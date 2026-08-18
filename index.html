@@ -14,8 +14,8 @@
     <meta name="twitter:title" content="CipherScope — Private Security Workbench">
     <meta name="twitter:description" content="Private credential tools and practical browser-based security checks.">
     <meta name="twitter:image" content="https://misfit-programming.github.io/cipherscope/og.png">
-    <link rel="stylesheet" href="./styles.css">
-    <script src="./app.js" defer></script>
+    <link rel="stylesheet" href="./styles.css?v=3">
+    <script src="./app.js?v=3" defer></script>
   </head>
   <body>
     <main class="app-shell">
@@ -31,12 +31,17 @@
             <button class="nav-item" data-tool="passphrase"><span aria-hidden="true">≋</span>Passphrase builder</button>
           </section>
           <section class="nav-group"><h2>Inspect</h2>
+            <button class="nav-item" data-tool="supertool"><span aria-hidden="true">⌘</span>SuperTool</button>
             <button class="nav-item" data-tool="dns"><span aria-hidden="true">◎</span>DNS records</button>
+            <button class="nav-item" data-tool="health"><span aria-hidden="true">✓</span>Domain health</button>
             <button class="nav-item" data-tool="domain"><span aria-hidden="true">◇</span>Domain helper</button>
             <button class="nav-item" data-tool="ip"><span aria-hidden="true">⌖</span>IP subnet</button>
+            <button class="nav-item" data-tool="connection"><span aria-hidden="true">◉</span>My connection</button>
             <button class="nav-item" data-tool="tls"><span aria-hidden="true">◈</span>TLS expiry</button>
             <button class="nav-item" data-tool="http"><span aria-hidden="true">≡</span>HTTP headers</button>
             <button class="nav-item" data-tool="email"><span aria-hidden="true">@</span>Email security</button>
+            <button class="nav-item" data-tool="mailheaders"><span aria-hidden="true">↳</span>Email headers</button>
+            <button class="nav-item" data-tool="policy"><span aria-hidden="true">✎</span>Policy builder</button>
           </section>
           <div class="sidebar-note"><strong>No accounts. No backend.</strong><span>Secrets and pasted values stay on this device. DNS checks use public browser-compatible resolvers.</span></div>
         </aside>
