@@ -28,7 +28,11 @@ test("ships a complete GitHub Pages entrypoint", async () => {
   assert.match(script, /crypto\.getRandomValues/);
   assert.match(script, /dns\.google\/resolve/);
   assert.match(script, /cloudflare-dns\.com\/dns-query/);
-  assert.match(script, /Public DNS is blocked or unavailable/);
+  assert.match(script, /cipherscope-workbench\.gray-protoco-6740\.chatgpt\.site\/api\/checks\/dns/);
+  assert.match(script, /1\.1\.1\.1\/dns-query/);
+  assert.match(script, /Public DNS is unavailable after trying/);
+  assert.match(script, /Use the worldwide DNS panel/);
+  assert.match(script, /server-resolver-frame/);
   assert.match(script, /mxtoolbox\.com\/SuperTool/);
   assert.match(script, /api\.ipify\.org/);
   assert.match(script, /ifconfig\.me\/all\.json/);

@@ -67,6 +67,7 @@ input[type="range"] { width:100%; accent-color:var(--green); } .range-labels { m
 .external-grid .external-action b { font-size:14px; }
 .status-dot.amber { background:#d4873d; box-shadow:0 0 0 4px #f7e9d9; }
 .fallback-state { border-color:#dfd3bd; background:#fffdf7; }
+.server-resolver-frame { width:100%; min-height:760px; margin:1.25rem 0; border:1px solid var(--line); border-radius:16px; background:#fff; }
 .quick-commands { display:flex; flex-wrap:wrap; gap:7px; margin-top:14px; }
 .quick-commands button { padding:6px 9px; border:1px solid #d6dad3; border-radius:7px; background:#f3f5ef; color:var(--green-dark); font:700 10px ui-monospace,SFMono-Regular,Consolas,monospace; cursor:pointer; }
 .quick-commands button:hover { border-color:#9fac9f; background:#e9f1e8; }
