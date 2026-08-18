@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CipherScope — Private Security Workbench</title>
+    <meta name="description" content="Generate strong credentials and run practical browser-based DNS, domain, IP, TLS, HTTP, and email checks.">
+    <meta name="theme-color" content="#f5f3ed">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="CipherScope — Private Security Workbench">
+    <meta property="og:description" content="Private credential tools and practical browser-based security checks.">
+    <meta property="og:image" content="https://misfit-programming.github.io/cipherscope/og.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="CipherScope — Private Security Workbench">
+    <meta name="twitter:description" content="Private credential tools and practical browser-based security checks.">
+    <meta name="twitter:image" content="https://misfit-programming.github.io/cipherscope/og.png">
+    <link rel="stylesheet" href="./styles.css">
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#top" aria-label="CipherScope home"><span class="brand-mark" aria-hidden="true">C</span><span>CipherScope</span><span class="brand-badge">Pages edition</span></a>
+        <div class="privacy-pill"><span></span> Static · privacy-first</div>
+      </header>
+      <div class="workspace" id="top">
+        <aside class="sidebar" aria-label="Security tools">
+          <p class="sidebar-kicker">Security toolkit</p>
+          <section class="nav-group"><h2>Create</h2>
+            <button class="nav-item active" data-tool="password" aria-current="page"><span aria-hidden="true">✦</span>Password generator</button>
+            <button class="nav-item" data-tool="passphrase"><span aria-hidden="true">≋</span>Passphrase builder</button>
+          </section>
+          <section class="nav-group"><h2>Inspect</h2>
+            <button class="nav-item" data-tool="dns"><span aria-hidden="true">◎</span>DNS records</button>
+            <button class="nav-item" data-tool="domain"><span aria-hidden="true">◇</span>Domain helper</button>
+            <button class="nav-item" data-tool="ip"><span aria-hidden="true">⌖</span>IP subnet</button>
+            <button class="nav-item" data-tool="tls"><span aria-hidden="true">◈</span>TLS expiry</button>
+            <button class="nav-item" data-tool="http"><span aria-hidden="true">≡</span>HTTP headers</button>
+            <button class="nav-item" data-tool="email"><span aria-hidden="true">@</span>Email security</button>
+          </section>
+          <div class="sidebar-note"><strong>No accounts. No backend.</strong><span>Secrets and pasted values stay on this device. DNS checks use Cloudflare’s public resolver.</span></div>
+        </aside>
+        <section class="content" id="tool-content" aria-live="polite"></section>
+      </div>
+      <footer><span>CipherScope</span><span>A static, open-source security workbench. Public results are informative, not a professional assessment.</span></footer>
+    </main>
+    <noscript><div class="noscript">CipherScope requires JavaScript to run its browser-based tools.</div></noscript>
+  </body>
+</html>
