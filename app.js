@@ -101,14 +101,47 @@ function renderPassphrase() {
   document.querySelector("#regenerate").addEventListener("click", generate); document.querySelector("#build-phrase").addEventListener("click", generate); wireCopyButtons(); generate();
 }
 
+const DNS_RESOLVERS = [
+  {
+    name: "Google Public DNS",
+    url: (name, type) => `https://dns.google/resolve?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}&edns_client_subnet=0.0.0.0%2F0`,
+    options: {},
+  },
+  {
+    name: "Cloudflare DNS",
+    url: (name, type) => `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}`,
+    options: { headers: { accept: "application/dns-json" } },
+  },
+];
+
+async function queryResolver(resolver, name, type) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(resolver.url(name, type), { ...resolver.options, signal: controller.signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (typeof data?.Status !== "number") throw new Error("Invalid DNS response");
+    return { ...data, resolver: resolver.name };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function dnsQuery(name, type) {
-  const response = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${type}`, { headers: { accept: "application/dns-json" } });
-  if (!response.ok) throw new Error("The public DNS resolver did not return a usable response.");
-  return response.json();
+  for (const resolver of DNS_RESOLVERS) {
+    try {
+      return await queryResolver(resolver, name, type);
+    } catch {
+      if (resolver === DNS_RESOLVERS.at(-1)) {
+        throw new Error("Public DNS is blocked or unavailable on this network. Try again on another connection or allow dns.google and cloudflare-dns.com.");
+      }
+    }
+  }
 }
 
 function renderDns() {
-  content.innerHTML = `${toolHeader("DNS explorer", "Resolve public DNS records", "Query common record types directly from Cloudflare’s public DNS-over-HTTPS resolver.")}
+  content.innerHTML = `${toolHeader("DNS explorer", "Resolve public DNS records", "Query common record types through browser-compatible public DNS-over-HTTPS resolvers.")}
     <form class="lookup-card" id="dns-form"><label for="dns-host">Domain or hostname</label><div class="lookup-row"><input id="dns-host" placeholder="example.com" spellcheck="false"><select id="dns-type" aria-label="Record type"><option>ALL</option>${DNS_TYPES.map((type) => `<option>${type}</option>`).join("")}</select><button class="primary">Resolve records</button></div><p>Only the hostname and requested record types are sent to the public resolver.</p></form><div id="result" class="empty-state-wrap"><div class="empty-state"><div class="scope-rings"><span>+</span></div><h2>Ready when you are</h2><p>Public DNS results and TTL values will appear here.</p></div></div>`;
   document.querySelector("#dns-form").addEventListener("submit", async (event) => {
     event.preventDefault(); const button = event.submitter; button.disabled = true; button.textContent = "Checking…";
@@ -116,7 +149,8 @@ function renderDns() {
       const host = cleanHost(document.querySelector("#dns-host").value); const choice = document.querySelector("#dns-type").value; const types = choice === "ALL" ? DNS_TYPES : [choice];
       const answers = await Promise.all(types.map(async (type) => ({ type, data: await dnsQuery(host, type) })));
       const total = answers.reduce((sum, item) => sum + (item.data.Answer?.length ?? 0), 0);
-      document.querySelector("#result").innerHTML = resultCard(host, `${total} public record${total === 1 ? "" : "s"} found.`, answers.map((item) => rows(item.type, (item.data.Answer ?? []).map((answer) => ({ label: `${answer.name.replace(/\.$/, "")} · TTL ${answer.TTL}s`, value: answer.data.replace(/^"|"$/g, "") })))), [{ label: "Resolver", value: "Cloudflare DNS over HTTPS" }, { label: "Record types", value: types.join(", ") }]);
+      const resolvers = [...new Set(answers.map((item) => item.data.resolver))].join(", ");
+      document.querySelector("#result").innerHTML = resultCard(host, `${total} public record${total === 1 ? "" : "s"} found.`, answers.map((item) => rows(item.type, (item.data.Answer ?? []).map((answer) => ({ label: `${answer.name.replace(/\.$/, "")} · TTL ${answer.TTL}s`, value: answer.data.replace(/^"|"$/g, "") })))), [{ label: "Resolver", value: resolvers }, { label: "Record types", value: types.join(", ") }]);
     } catch (error) { showError(error.message); } finally { button.disabled = false; button.textContent = "Resolve records"; }
   });
 }
