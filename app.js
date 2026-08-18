@@ -140,6 +140,31 @@ async function dnsQuery(name, type) {
   }
 }
 
+const SUPER_COMMANDS = ["mx","a","aaaa","cname","txt","ns","soa","caa","ptr","spf","dkim","dmarc","bimi","mta-sts","tlsrpt","dns","whois","arin","asn","blacklist","smtp","tcp","http","https","ping","trace"];
+const DNS_COMMAND_TYPES = { mx:"MX", a:"A", aaaa:"AAAA", cname:"CNAME", txt:"TXT", ns:"NS", soa:"SOA", caa:"CAA", ptr:"PTR" };
+
+function externalLookupUrl(command, value) {
+  return `https://mxtoolbox.com/SuperTool.aspx?action=${encodeURIComponent(`${command}:${value}`)}&run=toolpage`;
+}
+
+function externalLinks(links) {
+  return `<div class="external-grid">${links.map((link) => `<a class="external-action" href="${escapeHtml(link.url)}" target="_blank" rel="noreferrer"><span>${escapeHtml(link.label)}</span><b>↗</b></a>`).join("")}</div>`;
+}
+
+function lookupFallback(value, command = "dns") {
+  const target = encodeURIComponent(value);
+  return `<div class="result-card fallback-state"><div class="result-head"><div><span class="status-dot amber"></span>Browser lookup restricted</div></div><h2>Continue with an external diagnostic</h2><p class="result-summary">This network is blocking direct public DNS requests from the page. CipherScope remains Pages-only, so it cannot proxy around that policy. These links open the lookup at the provider.</p>${externalLinks([
+    { label: `MXToolbox ${command.toUpperCase()} lookup`, url: externalLookupUrl(command, value) },
+    { label: "Google Public DNS", url: `https://dns.google/query?name=${target}&type=${encodeURIComponent(DNS_COMMAND_TYPES[command] || "A")}` },
+    { label: "ICANN domain lookup", url: `https://lookup.icann.org/en/lookup?name=${target}` },
+  ])}</div>`;
+}
+
+function showLookupFallback(value, command) {
+  const target = document.querySelector("#result");
+  if (target) target.innerHTML = lookupFallback(value, command);
+}
+
 function renderDns() {
   content.innerHTML = `${toolHeader("DNS explorer", "Resolve public DNS records", "Query common record types through browser-compatible public DNS-over-HTTPS resolvers.")}
     <form class="lookup-card" id="dns-form"><label for="dns-host">Domain or hostname</label><div class="lookup-row"><input id="dns-host" placeholder="example.com" spellcheck="false"><select id="dns-type" aria-label="Record type"><option>ALL</option>${DNS_TYPES.map((type) => `<option>${type}</option>`).join("")}</select><button class="primary">Resolve records</button></div><p>Only the hostname and requested record types are sent to the public resolver.</p></form><div id="result" class="empty-state-wrap"><div class="empty-state"><div class="scope-rings"><span>+</span></div><h2>Ready when you are</h2><p>Public DNS results and TTL values will appear here.</p></div></div>`;
@@ -151,7 +176,82 @@ function renderDns() {
       const total = answers.reduce((sum, item) => sum + (item.data.Answer?.length ?? 0), 0);
       const resolvers = [...new Set(answers.map((item) => item.data.resolver))].join(", ");
       document.querySelector("#result").innerHTML = resultCard(host, `${total} public record${total === 1 ? "" : "s"} found.`, answers.map((item) => rows(item.type, (item.data.Answer ?? []).map((answer) => ({ label: `${answer.name.replace(/\.$/, "")} · TTL ${answer.TTL}s`, value: answer.data.replace(/^"|"$/g, "") })))), [{ label: "Resolver", value: resolvers }, { label: "Record types", value: types.join(", ") }]);
-    } catch (error) { showError(error.message); } finally { button.disabled = false; button.textContent = "Resolve records"; }
+    } catch (error) { const choice = document.querySelector("#dns-type").value; if (error.message.startsWith("Public DNS is blocked")) showLookupFallback(document.querySelector("#dns-host").value.trim(), choice === "ALL" ? "dns" : choice.toLowerCase()); else showError(error.message); } finally { button.disabled = false; button.textContent = "Resolve records"; }
+  });
+}
+
+async function runDnsCommand(command, rawValue) {
+  let name;
+  let type;
+  let filter = () => true;
+  if (command === "ptr") {
+    const ip = rawValue.trim();
+    ipv4ToNumber(ip);
+    name = `${ip.split(".").reverse().join(".")}.in-addr.arpa`;
+    type = "PTR";
+  } else {
+    const [hostValue, selectorValue] = rawValue.split(":");
+    const host = cleanHost(hostValue);
+    name = host;
+    type = DNS_COMMAND_TYPES[command];
+    if (command === "spf") { type = "TXT"; filter = (answer) => answer.data.replaceAll('"', "").toLowerCase().startsWith("v=spf1"); }
+    if (command === "dmarc") { name = `_dmarc.${host}`; type = "TXT"; filter = (answer) => answer.data.replaceAll('"', "").toLowerCase().startsWith("v=dmarc1"); }
+    if (command === "mta-sts") { name = `_mta-sts.${host}`; type = "TXT"; }
+    if (command === "tlsrpt") { name = `_smtp._tls.${host}`; type = "TXT"; }
+    if (command === "bimi") { name = `default._bimi.${host}`; type = "TXT"; }
+    if (command === "dkim") {
+      const selector = selectorValue?.trim().toLowerCase();
+      if (!selector || !/^[a-z0-9_-]+$/.test(selector)) throw new Error("For DKIM, enter the domain and selector as example.com:selector.");
+      name = `${selector}._domainkey.${host}`; type = "TXT";
+    }
+  }
+  const data = await dnsQuery(name, type);
+  return { name, type, resolver: data.resolver, answers: (data.Answer ?? []).filter(filter) };
+}
+
+function renderSupertool() {
+  content.innerHTML = `${toolHeader("Integrated diagnostics", "Run a SuperTool lookup", "Use command-style DNS, email, reputation, website, and network diagnostics from one place.")}
+    <form class="lookup-card" id="super-form"><label for="super-value">Domain, hostname, or IP address</label><div class="lookup-row"><select id="super-command" aria-label="Lookup command">${SUPER_COMMANDS.map((command) => `<option>${command}</option>`).join("")}</select><input id="super-value" placeholder="example.com" spellcheck="false"><button class="primary">Run lookup</button></div><p>DKIM values use domain:selector. Server-side tests open at MXToolbox because static Pages cannot make SMTP, ICMP, TCP, or blacklist connections.</p><div class="quick-commands">${["mx","spf","dmarc","blacklist","smtp","https","ptr"].map((command) => `<button type="button" data-command="${command}">${command}:</button>`).join("")}</div></form><div id="result" class="empty-state-wrap"><div class="empty-state"><div class="scope-rings"><span>⌘</span></div><h2>Choose a diagnostic</h2><p>DNS-backed commands run in the page when permitted. Restricted network tests hand off with the target already filled in.</p></div></div>`;
+  document.querySelectorAll("[data-command]").forEach((button) => button.addEventListener("click", () => { document.querySelector("#super-command").value = button.dataset.command; document.querySelector("#super-value").focus(); }));
+  document.querySelector("#super-form").addEventListener("submit", async (event) => {
+    event.preventDefault(); const button = event.submitter; const command = document.querySelector("#super-command").value; const value = document.querySelector("#super-value").value.trim();
+    if (!value) return showError("Enter a domain, hostname, or IP address first.");
+    button.disabled = true; button.textContent = "Checking…";
+    try {
+      if (command === "dns") {
+        const host = cleanHost(value); const types = ["A","AAAA","MX","NS","TXT","SOA"];
+        const results = await Promise.all(types.map(async (recordType) => ({ recordType, data: await dnsQuery(host, recordType) })));
+        const count = results.reduce((sum, item) => sum + (item.data.Answer?.length ?? 0), 0);
+        document.querySelector("#result").innerHTML = resultCard(host, `${count} records found across ${types.length} DNS types.`, results.map((item) => rows(item.recordType, (item.data.Answer ?? []).map((answer) => ({ label: `TTL ${answer.TTL}s`, value: answer.data.replace(/^"|"$/g, "") })))), [{ label:"Command", value:"dns" }, { label:"Resolver", value:results[0].data.resolver }]);
+      } else if (DNS_COMMAND_TYPES[command] || ["spf","dkim","dmarc","bimi","mta-sts","tlsrpt"].includes(command)) {
+        const result = await runDnsCommand(command, value);
+        document.querySelector("#result").innerHTML = resultCard(result.name, `${result.answers.length} matching ${command.toUpperCase()} record${result.answers.length === 1 ? "" : "s"} found.`, [rows(result.type, result.answers.map((answer) => ({ label:`TTL ${answer.TTL}s`, value:answer.data.replace(/^"|"$/g, "") }))), `<section class="result-section"><h3>Related diagnostics</h3>${externalLinks([{ label:"Open full MXToolbox test", url:externalLookupUrl(command, value) }])}</section>`], [{ label:"Command", value:command }, { label:"Resolver", value:result.resolver }]);
+      } else {
+        document.querySelector("#result").innerHTML = resultCard(`${command}:${value}`, "This diagnostic requires a remote server or licensed reputation data and cannot run inside static GitHub Pages.", [`<section class="result-section"><h3>Continue securely</h3>${externalLinks([{ label:`Run ${command.toUpperCase()} at MXToolbox`, url:externalLookupUrl(command, value) }, { label:"Open ICANN lookup", url:`https://lookup.icann.org/en/lookup?name=${encodeURIComponent(value)}` }])}</section>`], [{ label:"Mode", value:"External diagnostic" }, { label:"Target", value }]);
+      }
+    } catch (error) {
+      if (error.message.startsWith("Public DNS is blocked")) showLookupFallback(value, command); else showError(error.message);
+    } finally { button.disabled = false; button.textContent = "Run lookup"; }
+  });
+}
+
+function healthRow(label, present, detail) { return { label, value:detail, tone:present ? "present" : "missing" }; }
+
+function renderHealth() {
+  content.innerHTML = `${toolHeader("Mail and DNS posture", "Check domain health", "Review core public records for mail delivery, policy enforcement, certificate issuance, and authoritative DNS.")}
+    <form class="lookup-card" id="health-form"><label for="health-host">Domain name</label><div class="lookup-row"><input id="health-host" placeholder="example.com" spellcheck="false"><button class="primary">Check domain</button></div><p>This Pages edition evaluates public DNS signals. SMTP, reputation, and active web-server tests are linked separately.</p></form><div id="result" class="empty-state-wrap"><div class="empty-state"><div class="scope-rings"><span>✓</span></div><h2>Run a domain health check</h2><p>MX, SPF, DMARC, MTA-STS, TLS reporting, CAA, and name-server signals will appear here.</p></div></div>`;
+  document.querySelector("#health-form").addEventListener("submit", async (event) => {
+    event.preventDefault(); const button = event.submitter; const host = document.querySelector("#health-host").value.trim(); button.disabled = true; button.textContent = "Checking…";
+    try {
+      const domain = cleanHost(host); const queries = await Promise.all([
+        dnsQuery(domain,"MX"), dnsQuery(domain,"TXT"), dnsQuery(`_dmarc.${domain}`,"TXT"), dnsQuery(`_mta-sts.${domain}`,"TXT"), dnsQuery(`_smtp._tls.${domain}`,"TXT"), dnsQuery(domain,"CAA"), dnsQuery(domain,"NS")
+      ]);
+      const [mx,txt,dmarc,mta,tlsrpt,caa,ns] = queries; const text = (data) => (data.Answer ?? []).map((answer) => answer.data.replaceAll('"', ""));
+      const spfValue = text(txt).find((value) => value.toLowerCase().startsWith("v=spf1")); const dmarcValue = text(dmarc).find((value) => value.toLowerCase().startsWith("v=dmarc1"));
+      const checks = [healthRow("MX routing", Boolean(mx.Answer?.length), mx.Answer?.length ? `${mx.Answer.length} exchanger(s)` : "No MX records"), healthRow("SPF", Boolean(spfValue), spfValue || "Not published"), healthRow("DMARC", Boolean(dmarcValue), dmarcValue || "Not published"), healthRow("MTA-STS", Boolean(mta.Answer?.length), text(mta)[0] || "Not published"), healthRow("TLS reporting", Boolean(tlsrpt.Answer?.length), text(tlsrpt)[0] || "Not published"), healthRow("CAA", Boolean(caa.Answer?.length), caa.Answer?.length ? `${caa.Answer.length} policy record(s)` : "No issuance restriction"), healthRow("Authoritative DNS", Boolean(ns.Answer?.length), ns.Answer?.length ? `${ns.Answer.length} name server(s)` : "No NS response")];
+      const passed = checks.filter((check) => check.tone === "present").length;
+      document.querySelector("#result").innerHTML = resultCard(domain, `${passed} of ${checks.length} public health signals were detected.`, [rows("Health signals", checks), `<section class="result-section"><h3>Active and reputation tests</h3>${externalLinks([{ label:"Full email health report", url:`https://mxtoolbox.com/emailhealth/${encodeURIComponent(domain)}/` }, { label:"Blacklist check", url:externalLookupUrl("blacklist", domain) }, { label:"SMTP diagnostics", url:externalLookupUrl("smtp", domain) }])}</section>`], [{ label:"Signals", value:`${passed}/${checks.length}` }, { label:"Resolver", value:queries[0].resolver }, { label:"Scope", value:"Public DNS" }]);
+    } catch (error) { if (error.message.startsWith("Public DNS is blocked")) showLookupFallback(host, "dns"); else showError(error.message); } finally { button.disabled = false; button.textContent = "Check domain"; }
   });
 }
 
@@ -212,11 +312,74 @@ function renderEmail() {
     event.preventDefault(); const button = event.submitter; button.disabled = true; button.textContent = "Checking…";
     try { const host = cleanHost(document.querySelector("#email-host").value); const [mx, txt, dmarc] = await Promise.all([dnsQuery(host,"MX"), dnsQuery(host,"TXT"), dnsQuery(`_dmarc.${host}`,"TXT")]); const clean = (answer) => (answer?.data ?? "").replace(/^"|"$/g, ""); const spf = (txt.Answer ?? []).map(clean).find((value) => value.toLowerCase().startsWith("v=spf1")); const dmarcValue = (dmarc.Answer ?? []).map(clean).find((value) => value.toLowerCase().startsWith("v=dmarc1")); const score = [mx.Answer?.length, spf, dmarcValue].filter(Boolean).length;
       document.querySelector("#result").innerHTML = resultCard(host, `${score} of 3 core public mail signals were detected.`, [rows("MX routing", (mx.Answer ?? []).map((answer) => ({ label: `TTL ${answer.TTL}s`, value: answer.data }))), rows("Policy records", [{ label: "SPF", value: spf || "Not present", tone: spf ? "present" : "missing" }, { label: "DMARC", value: dmarcValue || "Not present", tone: dmarcValue ? "present" : "missing" }])], [{ label: "Mail exchangers", value: mx.Answer?.length ? String(mx.Answer.length) : "None" }, { label: "SPF", value: spf ? "Published" : "Not found" }, { label: "DMARC", value: dmarcValue ? (dmarcValue.match(/\bp=([^;]+)/i)?.[1]?.toUpperCase() ?? "Published") : "Not found" }]);
-    } catch (error) { showError(error.message); } finally { button.disabled = false; button.textContent = "Check email DNS"; }
+    } catch (error) { if (error.message.startsWith("Public DNS is blocked")) showLookupFallback(document.querySelector("#email-host").value.trim(), "mx"); else showError(error.message); } finally { button.disabled = false; button.textContent = "Check email DNS"; }
   });
 }
 
-const renderers = { password: renderPassword, passphrase: renderPassphrase, dns: renderDns, domain: renderDomain, ip: renderIp, tls: renderTls, http: renderHttp, email: renderEmail };
+function parseMailHeaders(raw) {
+  const parsed = {};
+  raw.replace(/\r?\n[ \t]+/g, " ").split(/\r?\n/).forEach((line) => {
+    const index = line.indexOf(":"); if (index < 1) return;
+    const name = line.slice(0, index).trim().toLowerCase(); const value = line.slice(index + 1).trim();
+    (parsed[name] ||= []).push(value);
+  });
+  return parsed;
+}
+
+function authStatus(text, protocol) {
+  const match = text.match(new RegExp(`\\b${protocol}=([a-z]+)`, "i"));
+  return match?.[1]?.toUpperCase() || "NOT REPORTED";
+}
+
+function renderMailheaders() {
+  content.innerHTML = `${toolHeader("Delivered message diagnostics", "Analyze email headers", "Inspect routing hops, authentication results, identities, and common warning signals without uploading a message.")}
+    <form class="lookup-card" id="mail-header-form"><label for="mail-header-input">Raw email headers</label><textarea id="mail-header-input" rows="15" placeholder="Authentication-Results: mx.example; spf=pass; dkim=pass; dmarc=pass&#10;Received: from mail.example.com ...&#10;From: sender@example.com&#10;Return-Path: &lt;bounce@example.com&gt;"></textarea><button class="primary full">Analyze email headers</button><p>Paste headers only—not the message body. Everything is processed locally in this browser.</p></form><div id="result" class="empty-state-wrap"><div class="empty-state"><div class="scope-rings"><span>↳</span></div><h2>Paste delivered-message headers</h2><p>CipherScope will summarize authentication and the visible delivery path.</p></div></div>`;
+  document.querySelector("#mail-header-form").addEventListener("submit", (event) => {
+    event.preventDefault(); const raw = document.querySelector("#mail-header-input").value.trim(); if (!raw) return showError("Paste the raw headers from a delivered message first.");
+    const parsed = parseMailHeaders(raw); const auth = [...(parsed["authentication-results"] ?? []), ...(parsed["received-spf"] ?? [])].join(" ");
+    const statuses = ["spf","dkim","dmarc"].map((protocol) => { const status = authStatus(auth, protocol); return { label:protocol.toUpperCase(), value:status, tone:status === "PASS" ? "present" : "missing" }; });
+    const received = parsed.received ?? []; const from = parsed.from?.[0] || "Not present"; const returnPath = parsed["return-path"]?.[0] || "Not present";
+    const warnings = []; if (!parsed.date) warnings.push("Date header is missing."); if (!parsed["message-id"]) warnings.push("Message-ID is missing."); if (received.length === 0) warnings.push("No Received routing hops were found."); if (statuses.every((item) => item.value === "NOT REPORTED")) warnings.push("No SPF, DKIM, or DMARC result was found.");
+    document.querySelector("#result").innerHTML = resultCard(parsed.subject?.[0] || "Email header report", `${received.length} visible routing hop${received.length === 1 ? "" : "s"}; ${warnings.length} warning${warnings.length === 1 ? "" : "s"}.`, [rows("Authentication", statuses), rows("Identity", [{ label:"From", value:from }, { label:"Return-Path", value:returnPath }, { label:"Message-ID", value:parsed["message-id"]?.[0] || "Not present" }, { label:"Date", value:parsed.date?.[0] || "Not present" }]), rows("Delivery path (newest first)", received.map((value,index) => ({ label:`Hop ${index + 1}`, value }))), rows("Warnings", warnings.map((value) => ({ value })))], [{ label:"SPF", value:statuses[0].value }, { label:"DKIM", value:statuses[1].value }, { label:"DMARC", value:statuses[2].value }, { label:"Headers", value:String(Object.keys(parsed).length) }]);
+  });
+}
+
+function renderPolicy() {
+  content.innerHTML = `${toolHeader("Email authentication", "Build SPF and DMARC records", "Create starter policy records locally, then review them with your mail provider before publishing.")}
+    <div class="policy-grid"><form class="lookup-card" id="dmarc-form"><h2>DMARC record</h2><div class="form-grid two"><label>Policy<select id="dmarc-policy"><option>none</option><option>quarantine</option><option>reject</option></select></label><label>Percentage<input id="dmarc-pct" type="number" min="0" max="100" value="100"></label><label>Alignment<select id="dmarc-align"><option value="r">Relaxed</option><option value="s">Strict</option></select></label><label>Aggregate reports<input id="dmarc-rua" type="email" placeholder="dmarc@example.com"></label></div><button class="primary full">Generate DMARC</button></form>
+    <form class="lookup-card" id="spf-form"><h2>SPF record</h2><div class="form-grid"><label>Allowed IPv4 ranges<input id="spf-ip4" placeholder="192.0.2.0/24, 198.51.100.10"></label><label>Provider includes<input id="spf-include" placeholder="_spf.google.com, spf.protection.outlook.com"></label><label>All other senders<select id="spf-all"><option value="-all">Fail (-all)</option><option value="~all">Softfail (~all)</option><option value="?all">Neutral (?all)</option></select></label></div><button class="primary full">Generate SPF</button></form></div><div id="result" class="empty-state-wrap"><div class="empty-state"><div class="scope-rings"><span>✎</span></div><h2>Configure a policy</h2><p>The generated TXT value can be copied into your DNS provider after review.</p></div></div>`;
+  const showRecord = (name, value, guidance) => { document.querySelector("#result").innerHTML = resultCard(name, guidance, [`<section class="result-section"><h3>TXT value</h3><div class="password-output"><code id="policy-output">${escapeHtml(value)}</code>${copyButton("policy-output")}</div></section>`], [{ label:"Record type", value:"TXT" }, { label:"Generated", value:"Locally" }]); wireCopyButtons(); };
+  document.querySelector("#dmarc-form").addEventListener("submit", (event) => { event.preventDefault(); const policy = document.querySelector("#dmarc-policy").value; const pct = Math.min(100, Math.max(0, Number(document.querySelector("#dmarc-pct").value) || 0)); const align = document.querySelector("#dmarc-align").value; const rua = document.querySelector("#dmarc-rua").value.trim(); const record = `v=DMARC1; p=${policy}; pct=${pct}; adkim=${align}; aspf=${align}${rua ? `; rua=mailto:${rua}` : ""}`; showRecord("_dmarc", record, "Start with monitoring when uncertain, review reports, then move toward enforcement."); });
+  document.querySelector("#spf-form").addEventListener("submit", (event) => { event.preventDefault(); const ips = document.querySelector("#spf-ip4").value.split(",").map((value) => value.trim()).filter(Boolean).map((value) => `ip4:${value}`); const includes = document.querySelector("#spf-include").value.split(",").map((value) => value.trim()).filter(Boolean).map((value) => `include:${value}`); const record = ["v=spf1", ...ips, ...includes, document.querySelector("#spf-all").value].join(" "); showRecord("@ / root domain", record, "Publish only one SPF record and include every service authorized to send mail for the domain."); });
+}
+
+const IP_SERVICES = [
+  { name:"ipify IPv4", url:"https://api.ipify.org?format=json", read:(data) => data.ip },
+  { name:"ipify dual stack", url:"https://api64.ipify.org?format=json", read:(data) => data.ip },
+  { name:"ifconfig.me", url:"https://ifconfig.me/all.json", read:(data) => data.ip_addr },
+];
+
+async function fetchPublicIp() {
+  for (const service of IP_SERVICES) {
+    const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 5000);
+    try { const response = await fetch(service.url, { signal:controller.signal }); if (!response.ok) throw new Error(); const data = await response.json(); const ip = service.read(data); if (ip) return { ip, service:service.name }; } catch {} finally { clearTimeout(timeout); }
+  }
+  return null;
+}
+
+function renderConnection() {
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection; const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Unavailable";
+  content.innerHTML = `${toolHeader("Connection snapshot", "What is my IP?", "View the public address exposed to websites plus browser and connection details available on this device.", '<button class="ghost-button" id="refresh-ip">↻ Refresh</button>')}
+    <div id="result">${resultCard("Checking public address…", "Local browser details are ready while CipherScope tries several public IP services.", [rows("Browser details", [{ label:"User agent", value:navigator.userAgent }, { label:"Language", value:navigator.languages?.join(", ") || navigator.language }, { label:"Platform", value:navigator.platform || "Unavailable" }, { label:"Timezone", value:zone }, { label:"Viewport", value:`${window.innerWidth} × ${window.innerHeight}` }, { label:"Online status", value:navigator.onLine ? "Online" : "Offline" }, { label:"Connection", value:connection ? `${connection.effectiveType || "unknown"}; ${connection.downlink || "?"} Mbps; ${connection.rtt || "?"} ms RTT` : "Not exposed by this browser" }])], [{ label:"Public IP", value:"Checking…" }, { label:"Privacy", value:"External service required" }])}</div>`;
+  const load = async () => {
+    const target = document.querySelector("#result"); target.querySelector("h2").textContent = "Checking public address…"; const result = await fetchPublicIp();
+    if (result) target.innerHTML = resultCard(result.ip, "This is the public address a permitted external service sees for your browser connection.", [rows("Browser details", [{ label:"User agent", value:navigator.userAgent }, { label:"Languages", value:navigator.languages?.join(", ") || navigator.language }, { label:"Platform", value:navigator.platform || "Unavailable" }, { label:"Timezone", value:zone }, { label:"Viewport", value:`${window.innerWidth} × ${window.innerHeight}` }, { label:"Online status", value:navigator.onLine ? "Online" : "Offline" }, { label:"Connection", value:connection ? `${connection.effectiveType || "unknown"}; ${connection.downlink || "?"} Mbps; ${connection.rtt || "?"} ms RTT` : "Not exposed by this browser" }]), `<section class="result-section"><h3>Command-line equivalents</h3>${rows("", [{ value:"curl ifconfig.me" }, { value:"curl ifconfig.me/all.json" }, { value:"curl https://api.ipify.org" }])}</section>`], [{ label:"Public IP", value:result.ip }, { label:"Source", value:result.service }, { label:"Protocol", value:result.ip.includes(":") ? "IPv6" : "IPv4" }]);
+    else target.innerHTML = resultCard("Public IP request blocked", "This browser or network blocked all three public-IP services. Local browser details remain available, and the direct links below can reveal the address in a new page.", [rows("Local browser details", [{ label:"User agent", value:navigator.userAgent }, { label:"Languages", value:navigator.languages?.join(", ") || navigator.language }, { label:"Timezone", value:zone }, { label:"Online status", value:navigator.onLine ? "Online" : "Offline" }]), `<section class="result-section"><h3>Open directly</h3>${externalLinks([{ label:"ifconfig.me", url:"https://ifconfig.me/" }, { label:"ipify", url:"https://api.ipify.org/" }, { label:"Amazon check IP", url:"https://checkip.amazonaws.com/" }])}</section>`], [{ label:"Public IP", value:"Restricted" }, { label:"Local status", value:navigator.onLine ? "Online" : "Offline" }]);
+  };
+  document.querySelector("#refresh-ip").addEventListener("click", load); load();
+}
+
+const renderers = { password: renderPassword, passphrase: renderPassphrase, supertool: renderSupertool, dns: renderDns, health: renderHealth, domain: renderDomain, ip: renderIp, connection: renderConnection, tls: renderTls, http: renderHttp, email: renderEmail, mailheaders: renderMailheaders, policy: renderPolicy };
 
 function activate(tool) {
   navItems.forEach((item) => { const active = item.dataset.tool === tool; item.classList.toggle("active", active); if (active) item.setAttribute("aria-current", "page"); else item.removeAttribute("aria-current"); });
