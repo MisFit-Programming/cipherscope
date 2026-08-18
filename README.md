@@ -1,48 +1,39 @@
 # CipherScope
 
-CipherScope is a privacy-first security workbench for generating credentials and reading practical public network signals without a cluttered, expert-only interface.
+CipherScope is a privacy-first security workbench published entirely with GitHub Pages.
 
-Live site: https://cipherscope-workbench.gray-protoco-6740.chatgpt.site
+**Website:** https://misfit-programming.github.io/cipherscope/
 
-## Tools
+## Browser-based tools
 
 - Cryptographically random password generator with entropy estimates
 - Memorable passphrase builder
-- DNS record explorer for A, AAAA, CNAME, MX, TXT, NS, and CAA
-- Domain registration and nameserver details through RDAP
-- IP ownership, routing, and approximate region context
-- HTTPS reachability and certificate-transparency history
-- HTTP security-header audit with public-destination safeguards
-- MX, SPF, DMARC, and common DKIM-selector checks
+- Public DNS record explorer for A, AAAA, CNAME, MX, TXT, NS, and CAA
+- Local domain normalization with authoritative RDAP links
+- Offline IPv4/CIDR subnet calculator
+- Offline TLS certificate-expiry and renewal calculator
+- Offline HTTP security-header analyzer
+- MX, SPF, and DMARC checks through public DNS-over-HTTPS
 
-Generated passwords and passphrases stay in the browser. Network diagnostics query public services and deliberately reject local or private-network destinations.
+There is no application backend, account system, database, or deployment secret. Generated credentials and pasted values stay in the browser. DNS and email checks send only the requested public hostname and record type to Cloudflare’s DNS-over-HTTPS resolver.
 
-## Local development
+## Run locally
 
-Requirements: Node.js 22.13 or newer.
+Serve the repository with any static web server. For example:
 
 ```bash
-npm install
-npm run dev
+python -m http.server 3000
 ```
 
 Then open `http://localhost:3000`.
 
-## Validation
+## Validate
 
 ```bash
-npm run build
-node --test tests/rendered-html.test.mjs
-npm run lint
+node --check app.js
+node --test tests/static-site.test.mjs
 ```
 
-## Stack
+## Deployment
 
-- React 19 and vinext
-- TypeScript
-- Cloudflare Workers-compatible server output
-- Public DNS-over-HTTPS, RDAP, certificate-transparency, and IP context sources
-
-## Security notes
-
-CipherScope is intended for defensive diagnostics and everyday credential hygiene. Public network data can be incomplete or delayed, and IP geolocation is approximate. The workbench does not replace a professional security assessment.
+The GitHub Actions workflow verifies the static files and deploys them to GitHub Pages whenever `main` changes.
