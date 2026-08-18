@@ -26,6 +26,8 @@ test("ships a complete GitHub Pages entrypoint", async () => {
   }
 
   assert.match(script, /crypto\.getRandomValues/);
+  assert.match(script, /dns\.google\/resolve/);
   assert.match(script, /cloudflare-dns\.com\/dns-query/);
+  assert.match(script, /Public DNS is blocked or unavailable/);
   assert.doesNotMatch(script, /\/api\/inspect|fetch\(`https:\/\/ipwho\.is|crt\.sh/);
 });
