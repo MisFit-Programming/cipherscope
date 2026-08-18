@@ -1,0 +1,18 @@
+import { and, desc, eq } from "drizzle-orm";
+import { getDb } from "@/db";
+import { assets, monitors, passwordRecipes, users } from "@/db/schema";
+import { readSession } from "@/app/lib/auth";
+
+const tables = { recipes: passwordRecipes, assets, monitors } as const;
+type Resource = keyof typeof tables;
+
+async function identity(){ const session=await readSession(); if(!session) return null; const db=getDb(); await db.insert(users).values({id:session.sub,email:session.email,name:session.name,role:session.role,lastSeenAt:new Date().toISOString()}).onConflictDoUpdate({target:users.id,set:{email:session.email,name:session.name,role:session.role,lastSeenAt:new Date().toISOString()}}); return session; }
+
+export async function GET(_:Request,{params}:{params:Promise<{resource:string}>}){ const session=await identity(); if(!session)return Response.json({error:"Sign in required"},{status:401}); const resource=(await params).resource as Resource; if(!(resource in tables))return Response.json({error:"Unknown resource"},{status:404}); const db=getDb(); const rows=await db.select().from(tables[resource] as typeof assets).where(eq((tables[resource] as typeof assets).userId,session.sub)).orderBy(desc((tables[resource] as typeof assets).createdAt)).limit(100); return Response.json({items:rows}); }
+
+export async function POST(request:Request,{params}:{params:Promise<{resource:string}>}){ const session=await identity(); if(!session)return Response.json({error:"Sign in required"},{status:401}); const resource=(await params).resource as Resource; const body=await request.json() as Record<string,unknown>; const db=getDb(); const id=crypto.randomUUID(); if(resource==="recipes"){ const name=String(body.name||"").trim().slice(0,80); const recipe=body.recipe; if(!name||!recipe)return Response.json({error:"name and recipe are required"},{status:400}); await db.insert(passwordRecipes).values({id,userId:session.sub,name,recipeJson:JSON.stringify(recipe)}); }
+  else if(resource==="assets"){ const kind=body.kind==="ip"?"ip":"domain"; const target=String(body.target||"").trim().slice(0,253); if(!target)return Response.json({error:"target is required"},{status:400}); await db.insert(assets).values({id,userId:session.sub,kind,target,label:String(body.label||"").slice(0,80)||null}); }
+  else if(resource==="monitors"){ const interval=Math.max(1,Math.min(60,Number(body.intervalMinutes)||15)); const target=String(body.target||"").trim().slice(0,500); const tool=String(body.tool||"").trim(); if(!target||!["dns","domain","ip","tls","http","email"].includes(tool))return Response.json({error:"valid tool and target are required"},{status:400}); await db.insert(monitors).values({id,userId:session.sub,tool,target,configJson:JSON.stringify(body.config||{}),expectedJson:JSON.stringify(body.expected||{}),intervalMinutes:interval,nextRunAt:new Date().toISOString()}); }
+  else return Response.json({error:"Unknown resource"},{status:404}); return Response.json({id},{status:201}); }
+
+export async function DELETE(request:Request,{params}:{params:Promise<{resource:string}>}){ const session=await identity(); if(!session)return Response.json({error:"Sign in required"},{status:401}); const resource=(await params).resource as Resource; if(!(resource in tables))return Response.json({error:"Unknown resource"},{status:404}); const id=new URL(request.url).searchParams.get("id"); if(!id)return Response.json({error:"id is required"},{status:400}); const table=tables[resource] as typeof assets; await getDb().delete(table).where(and(eq(table.id,id),eq(table.userId,session.sub))); return new Response(null,{status:204}); }
