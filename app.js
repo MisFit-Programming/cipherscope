@@ -103,6 +103,26 @@ function renderPassphrase() {
 
 const DNS_RESOLVERS = [
   {
+    name: "CipherScope worldwide DNS",
+    url: () => "https://cipherscope-workbench.gray-protoco-6740.chatgpt.site/api/checks/dns",
+    options: (name, type) => ({
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ target: name, recordType: type }),
+    }),
+    normalize: (data, name) => {
+      if (data?.tool !== "dns" || !Array.isArray(data.records)) throw new Error(data?.error || "Invalid CipherScope DNS response");
+      const providerRows = data.records.filter((row) => row.source === "Independent DoH" && row.answer && row.answer !== "—");
+      const rows = providerRows.length ? providerRows : data.records.filter((row) => row.answer && row.answer !== "—");
+      const unique = [...new Map(rows.map((row) => [String(row.answer), row])).values()];
+      return {
+        Status: data.summary === "The domain was not found" ? 3 : 0,
+        Answer: unique.map((row) => ({ name: `${name}.`, TTL: Number(row.ttl) || 0, data: String(row.answer) })),
+        resolver: data.provider || "CipherScope worldwide DNS",
+      };
+    },
+  },
+  {
     name: "Google Public DNS",
     url: (name, type) => `https://dns.google/resolve?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}&edns_client_subnet=0.0.0.0%2F0`,
     options: {},
@@ -112,15 +132,22 @@ const DNS_RESOLVERS = [
     url: (name, type) => `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}`,
     options: { headers: { accept: "application/dns-json" } },
   },
+  {
+    name: "Cloudflare 1.1.1.1",
+    url: (name, type) => `https://1.1.1.1/dns-query?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}`,
+    options: { headers: { accept: "application/dns-json" } },
+  },
 ];
 
 async function queryResolver(resolver, name, type) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const response = await fetch(resolver.url(name, type), { ...resolver.options, signal: controller.signal });
+    const options = typeof resolver.options === "function" ? resolver.options(name, type) : resolver.options;
+    const response = await fetch(resolver.url(name, type), { ...options, signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
+    if (resolver.normalize) return resolver.normalize(data, name, type);
     if (typeof data?.Status !== "number") throw new Error("Invalid DNS response");
     return { ...data, resolver: resolver.name };
   } finally {
@@ -134,7 +161,7 @@ async function dnsQuery(name, type) {
       return await queryResolver(resolver, name, type);
     } catch {
       if (resolver === DNS_RESOLVERS.at(-1)) {
-        throw new Error("Public DNS is blocked or unavailable on this network. Try again on another connection or allow dns.google and cloudflare-dns.com.");
+        throw new Error("Public DNS is unavailable after trying the CipherScope server, Google Public DNS, and Cloudflare 1.1.1.1.");
       }
     }
   }
@@ -153,7 +180,9 @@ function externalLinks(links) {
 
 function lookupFallback(value, command = "dns") {
   const target = encodeURIComponent(value);
-  return `<div class="result-card fallback-state"><div class="result-head"><div><span class="status-dot amber"></span>Browser lookup restricted</div></div><h2>Continue with an external diagnostic</h2><p class="result-summary">This network is blocking direct public DNS requests from the page. CipherScope remains Pages-only, so it cannot proxy around that policy. These links open the lookup at the provider.</p>${externalLinks([
+  const record = encodeURIComponent(DNS_COMMAND_TYPES[command] || "A");
+  const hostedResolver = `https://cipherscope-workbench.gray-protoco-6740.chatgpt.site/dns?target=${target}&record=${record}`;
+  return `<div class="result-card fallback-state"><div class="result-head"><div><span class="status-dot amber"></span>Direct resolver blocked</div></div><h2>Use the worldwide DNS panel</h2><p class="result-summary">Your network blocked browser DNS-over-HTTPS. The secure CipherScope panel below resolves through the server instead; your target is already filled in, so select <strong>Run check</strong> to see worldwide results.</p><iframe class="server-resolver-frame" src="${hostedResolver}" title="CipherScope worldwide DNS resolver" loading="eager" referrerpolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-forms allow-same-origin allow-downloads allow-popups"></iframe>${externalLinks([
     { label: `MXToolbox ${command.toUpperCase()} lookup`, url: externalLookupUrl(command, value) },
     { label: "Google Public DNS", url: `https://dns.google/query?name=${target}&type=${encodeURIComponent(DNS_COMMAND_TYPES[command] || "A")}` },
     { label: "ICANN domain lookup", url: `https://lookup.icann.org/en/lookup?name=${target}` },
@@ -176,7 +205,7 @@ function renderDns() {
       const total = answers.reduce((sum, item) => sum + (item.data.Answer?.length ?? 0), 0);
       const resolvers = [...new Set(answers.map((item) => item.data.resolver))].join(", ");
       document.querySelector("#result").innerHTML = resultCard(host, `${total} public record${total === 1 ? "" : "s"} found.`, answers.map((item) => rows(item.type, (item.data.Answer ?? []).map((answer) => ({ label: `${answer.name.replace(/\.$/, "")} · TTL ${answer.TTL}s`, value: answer.data.replace(/^"|"$/g, "") })))), [{ label: "Resolver", value: resolvers }, { label: "Record types", value: types.join(", ") }]);
-    } catch (error) { const choice = document.querySelector("#dns-type").value; if (error.message.startsWith("Public DNS is blocked")) showLookupFallback(document.querySelector("#dns-host").value.trim(), choice === "ALL" ? "dns" : choice.toLowerCase()); else showError(error.message); } finally { button.disabled = false; button.textContent = "Resolve records"; }
+    } catch (error) { const choice = document.querySelector("#dns-type").value; if (error.message.startsWith("Public DNS is unavailable")) showLookupFallback(document.querySelector("#dns-host").value.trim(), choice === "ALL" ? "dns" : choice.toLowerCase()); else showError(error.message); } finally { button.disabled = false; button.textContent = "Resolve records"; }
   });
 }
 
@@ -230,7 +259,7 @@ function renderSupertool() {
         document.querySelector("#result").innerHTML = resultCard(`${command}:${value}`, "This diagnostic requires a remote server or licensed reputation data and cannot run inside static GitHub Pages.", [`<section class="result-section"><h3>Continue securely</h3>${externalLinks([{ label:`Run ${command.toUpperCase()} at MXToolbox`, url:externalLookupUrl(command, value) }, { label:"Open ICANN lookup", url:`https://lookup.icann.org/en/lookup?name=${encodeURIComponent(value)}` }])}</section>`], [{ label:"Mode", value:"External diagnostic" }, { label:"Target", value }]);
       }
     } catch (error) {
-      if (error.message.startsWith("Public DNS is blocked")) showLookupFallback(value, command); else showError(error.message);
+      if (error.message.startsWith("Public DNS is unavailable")) showLookupFallback(value, command); else showError(error.message);
     } finally { button.disabled = false; button.textContent = "Run lookup"; }
   });
 }
@@ -251,7 +280,7 @@ function renderHealth() {
       const checks = [healthRow("MX routing", Boolean(mx.Answer?.length), mx.Answer?.length ? `${mx.Answer.length} exchanger(s)` : "No MX records"), healthRow("SPF", Boolean(spfValue), spfValue || "Not published"), healthRow("DMARC", Boolean(dmarcValue), dmarcValue || "Not published"), healthRow("MTA-STS", Boolean(mta.Answer?.length), text(mta)[0] || "Not published"), healthRow("TLS reporting", Boolean(tlsrpt.Answer?.length), text(tlsrpt)[0] || "Not published"), healthRow("CAA", Boolean(caa.Answer?.length), caa.Answer?.length ? `${caa.Answer.length} policy record(s)` : "No issuance restriction"), healthRow("Authoritative DNS", Boolean(ns.Answer?.length), ns.Answer?.length ? `${ns.Answer.length} name server(s)` : "No NS response")];
       const passed = checks.filter((check) => check.tone === "present").length;
       document.querySelector("#result").innerHTML = resultCard(domain, `${passed} of ${checks.length} public health signals were detected.`, [rows("Health signals", checks), `<section class="result-section"><h3>Active and reputation tests</h3>${externalLinks([{ label:"Full email health report", url:`https://mxtoolbox.com/emailhealth/${encodeURIComponent(domain)}/` }, { label:"Blacklist check", url:externalLookupUrl("blacklist", domain) }, { label:"SMTP diagnostics", url:externalLookupUrl("smtp", domain) }])}</section>`], [{ label:"Signals", value:`${passed}/${checks.length}` }, { label:"Resolver", value:queries[0].resolver }, { label:"Scope", value:"Public DNS" }]);
-    } catch (error) { if (error.message.startsWith("Public DNS is blocked")) showLookupFallback(host, "dns"); else showError(error.message); } finally { button.disabled = false; button.textContent = "Check domain"; }
+    } catch (error) { if (error.message.startsWith("Public DNS is unavailable")) showLookupFallback(host, "dns"); else showError(error.message); } finally { button.disabled = false; button.textContent = "Check domain"; }
   });
 }
 
@@ -312,7 +341,7 @@ function renderEmail() {
     event.preventDefault(); const button = event.submitter; button.disabled = true; button.textContent = "Checking…";
     try { const host = cleanHost(document.querySelector("#email-host").value); const [mx, txt, dmarc] = await Promise.all([dnsQuery(host,"MX"), dnsQuery(host,"TXT"), dnsQuery(`_dmarc.${host}`,"TXT")]); const clean = (answer) => (answer?.data ?? "").replace(/^"|"$/g, ""); const spf = (txt.Answer ?? []).map(clean).find((value) => value.toLowerCase().startsWith("v=spf1")); const dmarcValue = (dmarc.Answer ?? []).map(clean).find((value) => value.toLowerCase().startsWith("v=dmarc1")); const score = [mx.Answer?.length, spf, dmarcValue].filter(Boolean).length;
       document.querySelector("#result").innerHTML = resultCard(host, `${score} of 3 core public mail signals were detected.`, [rows("MX routing", (mx.Answer ?? []).map((answer) => ({ label: `TTL ${answer.TTL}s`, value: answer.data }))), rows("Policy records", [{ label: "SPF", value: spf || "Not present", tone: spf ? "present" : "missing" }, { label: "DMARC", value: dmarcValue || "Not present", tone: dmarcValue ? "present" : "missing" }])], [{ label: "Mail exchangers", value: mx.Answer?.length ? String(mx.Answer.length) : "None" }, { label: "SPF", value: spf ? "Published" : "Not found" }, { label: "DMARC", value: dmarcValue ? (dmarcValue.match(/\bp=([^;]+)/i)?.[1]?.toUpperCase() ?? "Published") : "Not found" }]);
-    } catch (error) { if (error.message.startsWith("Public DNS is blocked")) showLookupFallback(document.querySelector("#email-host").value.trim(), "mx"); else showError(error.message); } finally { button.disabled = false; button.textContent = "Check email DNS"; }
+    } catch (error) { if (error.message.startsWith("Public DNS is unavailable")) showLookupFallback(document.querySelector("#email-host").value.trim(), "mx"); else showError(error.message); } finally { button.disabled = false; button.textContent = "Check email DNS"; }
   });
 }
 
